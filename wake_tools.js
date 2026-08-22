@@ -4,7 +4,8 @@
  */
 
 const TOOL_CALL_TIMEOUT_MS = 30_000;
-const MAX_TOOL_ROUNDS = 8;
+const MAX_TOOL_ROUNDS = 3;
+const MAX_CALLS_PER_ROUND = 5;
 
 function readBool(key, fallback = false) {
   const raw = String(process.env[key] ?? "").trim().toLowerCase();
@@ -206,7 +207,7 @@ async function executeToolLoop(messages, assistantMessage, serverMap, requestOpt
     console.log(`[wake_tools] 工具调用轮次 ${rounds}/${MAX_TOOL_ROUNDS}`);
 
     // 执行每个工具调用
-    for (const call of toolCalls) {
+    for (const call of toolCalls.slice(0, MAX_CALLS_PER_ROUND)) {
       const fnName = call.function?.name;
       const fnArgs = JSON.parse(call.function?.arguments || "{}");
       const config = serverMap[fnName];
