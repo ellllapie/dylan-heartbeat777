@@ -6,6 +6,7 @@
 const TOOL_CALL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_ROUNDS = 3;
 const MAX_CALLS_PER_ROUND = 5;
+const MAX_RESULT_LENGTH = 3000;
 
 function readBool(key, fallback = false) {
   const raw = String(process.env[key] ?? "").trim().toLowerCase();
@@ -229,6 +230,12 @@ async function executeToolLoop(messages, assistantMessage, serverMap, requestOpt
           resultContent = JSON.stringify({ error: err.message });
           console.log(`[wake_tools] ${fnName} 执行失败: ${err.message}`);
         }
+      }
+
+      // 截断过长的工具返回，防止上下文爆炸
+      if (resultContent.length > MAX_RESULT_LENGTH) {
+        resultContent = resultContent.slice(0, MAX_RESULT_LENGTH) + "\n...[truncated]";
+        console.log(`[wake_tools] ${fnName} 结果已截断至 ${MAX_RESULT_LENGTH} chars`);
       }
 
       currentMessages.push({
