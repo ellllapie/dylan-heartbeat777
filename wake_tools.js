@@ -210,7 +210,18 @@ async function executeToolLoop(messages, assistantMessage, serverMap, requestOpt
     // 执行每个工具调用
     for (const call of toolCalls.slice(0, MAX_CALLS_PER_ROUND)) {
       const fnName = call.function?.name;
-      const fnArgs = JSON.parse(call.function?.arguments || "{}");
+      let fnArgs;
+      try {
+        fnArgs = JSON.parse(call.function?.arguments || "{}");
+      } catch (parseErr) {
+        currentMessages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify({ error: `参数解析失败: ${parseErr.message}` })
+        });
+        console.log(`[wake_tools] ${fnName} 参数解析失败，跳过`);
+        continue;
+      }
       const config = serverMap[fnName];
 
       let resultContent;
