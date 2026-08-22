@@ -11,6 +11,8 @@ const {
   resolveTimeZone,
   zonedWallTimeToDate
 } = require("./time_utils");
+let wakeTools = null;
+try { wakeTools = require("./wake_tools"); } catch {}
 
 // 批注 2026-08-10：与 Gateway 共用同一 DATA_DIR；未配置时仍落回项目目录，保护旧 VPS/本机部署。
 const DATA_DIR = ensureDataDir();
@@ -480,22 +482,35 @@ ${historyText}`
     return;
   }
 
+  // === 工具支持（可选） ===
+  let toolsConfig = null;
+  if (wakeTools) {
+    try {
+      toolsConfig = await wakeTools.getTools();
+    } catch (err) {
+      console.log("[wake_tools] 初始化失败，本次无工具:", err.message);
+    }
+  }
+
+  const requestBody = {
+    model: process.env.MODEL_NAME,
+    messages: wakeMessages,
+    temperature: 0.8,
+    top_p: 0.95,
+    stream: false
+  };
+  if (toolsConfig) {
+    requestBody.tools = toolsConfig.tools;
+  }
+
   const response = await fetch(process.env.TARGET_API_URL, {
     method: "POST",
-    // 批注 2026-08-10：上游只建连不结束时，旧循环永远不会安排下一次检查；
-    // 五分钟默认总超时只作兜底，可由 WAKE_UPSTREAM_TIMEOUT_MS 调整。
     signal: AbortSignal.timeout(WAKE_UPSTREAM_TIMEOUT_MS),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${process.env.TARGET_API_KEY}`
     },
-    body: JSON.stringify({
-      model: process.env.MODEL_NAME,
-      messages: wakeMessages,
-      temperature: 0.8,
-      top_p: 0.95,
-      stream: false
-    })
+    body: JSON.stringify(requestBody)
   });
 
   const responseText = await response.text();
@@ -509,7 +524,28 @@ ${historyText}`
     throw new Error(`模型请求失败（HTTP ${response.status}）：${responseText.slice(0, 300)}`);
   }
 
+  // 工具调用循环
+  if (toolsConfig && data.choices?.[0]?.message?.tool_calls?.length > 0) {
+    console.log("[wake_tools] 模型请求工具调用，进入循环");
+    try {
+      data = await wakeTools.executeToolLoop(
+        wakeMessages,
+        data.choices[0].message,
+        toolsConfig.serverMap,
+        {
+          url: process.env.TARGET_API_URL,
+          key: process.env.TARGET_API_KEY,
+          model: process.env.MODEL_NAME,
+          tools: toolsConfig.tools
+        }
+      );
+    } catch (err) {
+      console.log("[wake_tools] 工具循环出错:", err.message);
+    }
+  }
+
   const rawAiText = normalizeContentToText(data.choices?.[0]?.message?.content).trim();
+
   console.log("\nWake Result Summary:\n");
   console.log(JSON.stringify({ choices: Array.isArray(data.choices) ? data.choices.length : 0, ai_text_chars: rawAiText.length }));
 
