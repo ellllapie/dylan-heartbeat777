@@ -492,6 +492,18 @@ ${historyText}`
     }
   }
 
+  // 工具引导注入
+  if (toolsConfig) {
+    wakeMessages[0].content += `\n\n## 可用工具
+你现在可以使用工具来做实际的事情，不只是写文字。建议的行动：
+- 逛花园：查看新帖子（list_threads）、回复感兴趣的帖子（create_reply）、查看通知（list_notifications）
+- 玩小游戏：钓鱼、生态池塘等（先用 list_games 看看有什么）
+- 查看自己的状态（get_self）
+
+优先做一件你想做的事，做完之后再决定是否发推送给用户。
+如果工具调用失败也没关系，跳过就好。`;
+  }
+
   const requestBody = {
     model: process.env.MODEL_NAME,
     messages: wakeMessages,
