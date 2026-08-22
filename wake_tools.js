@@ -214,13 +214,8 @@ async function executeToolLoop(messages, assistantMessage, serverMap, requestOpt
       try {
         fnArgs = JSON.parse(call.function?.arguments || "{}");
       } catch (parseErr) {
-        currentMessages.push({
-          role: "tool",
-          tool_call_id: call.id,
-          content: JSON.stringify({ error: `参数解析失败: ${parseErr.message}` })
-        });
-        console.log(`[wake_tools] ${fnName} 参数解析失败，跳过`);
-        continue;
+        console.log(`[wake_tools] ${fnName} 参数解析失败，使用空参数重试`);
+        fnArgs = {};
       }
       const config = serverMap[fnName];
 
