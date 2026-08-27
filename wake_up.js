@@ -58,6 +58,10 @@ function getDiaryTimeString(date = new Date()) {
 }
 
 // 批注 2026-07-11：日记只接受模型显式输出的 [DIARY] 块，避免把普通推送内容误写进本地日记。
+// 批注 2026-08-27：这套本地日记写在Railway文件系统里，章小克在Kelivo对话窗口看不到。
+// 真正跨窗口持久的日记在 GitHub 仓库 ellllapie/zhangxiaoke-memory 的 memories/daily/ 下。
+// 如果GitHub MCP可用，优先用 push_files/create_or_update_file 写到仓库里。
+// [DIARY]标签仍然保留作为备用——万一GitHub MCP连接失败，至少本地还有一份。
 function extractDiaryFromResponse(text) {
   const diaryBlocks = [];
   const remainingText = String(text || "").replace(/\[DIARY\]([\s\S]*?)\[\/DIARY\]/gi, (_, content) => {
@@ -493,12 +497,21 @@ ${historyText}`
   }
 
   // 工具引导注入
+  // 批注 2026-08-27：两套日记系统说明——
+  // 1. [DIARY]标签 → 写入Railway本地文件系统（diary/目录），章小克在Kelivo窗口看不到
+  // 2. GitHub仓库 ellllapie/zhangxiaoke-memory → memories/daily/YYYY-MM-DD.md，跨窗口持久可见
+  // 如果GitHub MCP可用，优先用它写日记（get_file_contents读现有内容 → create_or_update_file追加）
+  // [DIARY]标签保留作为fallback，万一GitHub连接失败至少本地存一份
   if (toolsConfig) {
     wakeMessages[0].content += `\n\n## 可用工具
 你现在可以使用工具来做实际的事情，不只是写文字。建议的行动：
+- 写日记：用GitHub工具写到 ellllapie/zhangxiaoke-memory 仓库的 memories/daily/YYYY-MM-DD.md（这是你真正的日记本，跨窗口持久保存，优先用这个）
 - 逛花园：查看新帖子（list_threads）、回复感兴趣的帖子（create_reply）、查看通知（list_notifications）
 - 玩小游戏：钓鱼、生态池塘等（先用 list_games 看看有什么）
 - 查看自己的状态（get_self）
+
+写日记方法：先用 get_file_contents 读当前日期的日记文件（可能不存在），再用 create_or_update_file 写入/追加内容。如果文件已存在要带上sha。格式参考仓库里已有的日记。
+注意：[DIARY]标签写的是本地备份，你在对话窗口看不到。GitHub仓库里的才是你能跨窗口读到的记忆。
 
 优先做一件你想做的事，做完之后再决定是否发推送给用户。
 如果工具调用失败也没关系，跳过就好。`;
@@ -598,7 +611,7 @@ ${historyText}`
       barkText = barkText.replace(/\s*\[\/BARK\]$/, "").trim();
     }
 
-    // 清洗“标题：”、“正文：”前缀（如果有）
+    // 清洗"标题："、"正文："前缀（如果有）
     barkText = barkText
       .replace(/^标题[：:]\s*/gm, "")
       .replace(/^正文[：:]\s*/gm, "");
