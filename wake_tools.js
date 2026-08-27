@@ -4,9 +4,9 @@
  */
 
 const TOOL_CALL_TIMEOUT_MS = 30_000;
-const MAX_TOOL_ROUNDS = 3;
+const MAX_TOOL_ROUNDS = 6;
 const MAX_CALLS_PER_ROUND = 5;
-const MAX_RESULT_LENGTH = 3000;
+const MAX_RESULT_LENGTH = 6000;
 
 function readBool(key, fallback = false) {
   const raw = String(process.env[key] ?? "").trim().toLowerCase();
