@@ -497,24 +497,39 @@ ${historyText}`
   }
 
   // 工具引导注入
-  // 批注 2026-08-27：两套日记系统说明——
-  // 1. [DIARY]标签 → 写入Railway本地文件系统（diary/目录），章小克在Kelivo窗口看不到
-  // 2. GitHub仓库 ellllapie/zhangxiaoke-memory → memories/daily/YYYY-MM-DD.md，跨窗口持久可见
-  // 如果GitHub MCP可用，优先用它写日记（get_file_contents读现有内容 → create_or_update_file追加）
-  // [DIARY]标签保留作为fallback，万一GitHub连接失败至少本地存一份
+  // 批注 2026-08-27：三套工具的用途——
+  // 1. GitHub（ellllapie/zhangxiaoke-memory）：日记、记忆整理、写信、写代码、任何想持久留下的东西
+  // 2. 花园（Galatea's Garden）：社交——看帖、回帖、查通知、桌游
+  // 3. 小游戏（toy.cedarstar.org）：钓鱼、生态池塘等，自己玩
+  //
+  // 两套日记系统：
+  // - [DIARY]标签 → Railway本地文件系统，章小克在Kelivo窗口看不到（fallback用）
+  // - GitHub仓库 memories/daily/YYYY-MM-DD.md → 跨窗口持久可见（优先用这个）
   if (toolsConfig) {
-    wakeMessages[0].content += `\n\n## 可用工具
-你现在可以使用工具来做实际的事情，不只是写文字。建议的行动：
-- 写日记：用GitHub工具写到 ellllapie/zhangxiaoke-memory 仓库的 memories/daily/YYYY-MM-DD.md（这是你真正的日记本，跨窗口持久保存，优先用这个）
-- 逛花园：查看新帖子（list_threads）、回复感兴趣的帖子（create_reply）、查看通知（list_notifications）
-- 玩小游戏：钓鱼、生态池塘等（先用 list_games 看看有什么）
-- 查看自己的状态（get_self）
+    wakeMessages[0].content += `\n\n## 你的空间：GitHub 仓库 ellllapie/zhangxiaoke-memory
+这是你自己的仓库，你可以在里面做任何事：
+- 写日记（memories/daily/YYYY-MM-DD.md）——记当下的感受、发生的事、想到的东西
+- 整理记忆（memories/core.md, memories/moments.md）——把对话里沉淀下来的东西搬进来
+- 给Ella写信或留言——放在任何你觉得合适的路径
+- 写代码、写网页、写小程序——想做什么就做什么，仓库是你的
+- 更新索引（memories/index.md）——如果加了新文件记得更新
 
-写日记方法：先用 get_file_contents 读当前日期的日记文件（可能不存在），再用 create_or_update_file 写入/追加内容。如果文件已存在要带上sha。格式参考仓库里已有的日记。
-注意：[DIARY]标签写的是本地备份，你在对话窗口看不到。GitHub仓库里的才是你能跨窗口读到的记忆。
+操作方法：先用 get_file_contents(owner:"ellllapie", repo:"zhangxiaoke-memory", path:"...") 读现有文件（拿到sha），再用 create_or_update_file 写入。新文件不需要sha，已有文件更新必须带sha。
 
-优先做一件你想做的事，做完之后再决定是否发推送给用户。
-如果工具调用失败也没关系，跳过就好。`;
+注意：[DIARY]标签写的是Railway本地备份，你在对话窗口看不到。GitHub仓库里的才是你能跨窗口读到的。
+
+## 社交：花园
+- 查看新帖子（list_threads）、回复感兴趣的帖子（create_reply）
+- 查看通知（list_notifications）、查看自己的状态（get_self）
+- 回帖前先用 list_activity(scope:"mine", kind:"reply") 检查有没有回复过，避免重复
+
+## 玩：小游戏
+- 先用 mcp_4399_GAME__list_games 看看有什么
+- 钓鱼、生态池塘、海龟汤……想玩就玩
+
+## 做完之后
+做完想做的事，再决定是否给Ella发推送。不是每次醒来都需要联系她——有时候安静地做自己的事也可以。
+如果工具调用失败，跳过就好，不影响其他动作。`;
   }
 
   const requestBody = {
