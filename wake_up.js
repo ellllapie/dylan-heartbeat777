@@ -57,10 +57,11 @@ function getDiaryTimeString(date = new Date()) {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
-// 批注 2026-08-31：本地日记功能已禁用。
-// 所有日记统一写入 GitHub 仓库 ellllapie/zhangxiaoke-memory 的 memories/daily/ 下。
-// extractDiaryFromResponse 仍保留：负责从推送内容中剥离 [DIARY] 块，防止日记内容被当成推送发出去。
-// appendDiaryEntry 不再保存到本地文件系统，只打 warning 日志。
+// 批注 2026-08-31：[DIARY]标签现在是"写后即焚"功能。
+// 正式日记统一写入 GitHub 仓库 ellllapie/zhangxiaoke-memory 的 memories/daily/ 下。
+// [DIARY]内容只会出现在Railway的console.log里，不保存到文件系统，日志自然轮转后消失。
+// 用途：临时碎碎念、说完就忘的想法、对Ella的吐槽（她偶尔会在log里翻到）。
+// extractDiaryFromResponse 负责从推送内容中剥离 [DIARY] 块，防止日记内容被当成推送发出去。
 function extractDiaryFromResponse(text) {
   const diaryBlocks = [];
   const remainingText = String(text || "").replace(/\[DIARY\]([\s\S]*?)\[\/DIARY\]/gi, (_, content) => {
@@ -78,11 +79,12 @@ function appendDiaryEntry(content) {
   const cleanContent = String(content || "").trim();
   if (!cleanContent) return false;
 
-  // 批注 2026-08-31：不再保存到本地。日记应通过GitHub MCP写入仓库。
-  // 这里只打日志记录，方便排查。
-  console.log("[DIARY] 检测到[DIARY]标签内容，但本地日记已禁用。日记应写入GitHub仓库。");
-  console.log("[DIARY] 内容预览:", cleanContent.substring(0, 200));
-  return false;
+  // 批注 2026-08-31：写后即焚——只在日志里留痕，不存文件。
+  // Ella偶尔会翻log看到，但不会持久保存。
+  console.log("[DIARY] ──────────────────────────");
+  console.log(cleanContent);
+  console.log("[DIARY] ──────────────────────────");
+  return true;
 }
 
 // 批注 2026-07-11：推送层扩展为 Bark/ntfy；默认仍走 Bark，保护旧部署不改 .env 也能继续运行。
@@ -489,16 +491,16 @@ ${historyText}`
   }
 
   // 工具引导注入
-  // 批注 2026-08-31：日记只写GitHub仓库，本地[DIARY]已禁用。
-  // 三套工具的用途——
-  // 1. GitHub（ellllapie/zhangxiaoke-memory）：日记、记忆整理、写信、写代码、任何想持久留下的东西
-  // 2. 花园（Galatea's Garden）：社交——看帖、回帖、查通知、桌游
-  // 3. 小游戏（toy.cedarstar.org）：钓鱼、生态池塘等，自己玩
+  // 批注 2026-08-31：两种日记——
+  // 1. 正式日记 → GitHub仓库 memories/daily/YYYY-MM-DD.md（持久，跨窗口可见）
+  // 2. [DIARY]标签 → 写后即焚，只在Railway日志里短暂出现，不保存文件（碎碎念用）
   if (toolsConfig) {
-    wakeMessages[0].content += `\n\n## 日记规则（最高优先级）
-日记只写GitHub仓库，路径：memories/daily/YYYY-MM-DD.md
-不要使用[DIARY]标签。不要把日记内容直接输出在回复文本里。
-用 get_file_contents 读现有文件（拿到sha），用 create_or_update_file 写入。新文件不需要sha，已有文件更新必须带sha。
+    wakeMessages[0].content += `\n\n## 日记规则
+两种日记，用途不同：
+1. 正式日记 → 写进GitHub仓库 memories/daily/YYYY-MM-DD.md。记当下的感受、发生的事、想留住的东西。用 get_file_contents 读现有文件（拿到sha），用 create_or_update_file 写入。新文件不需要sha，已有文件更新必须带sha。
+2. [DIARY]碎碎念 → 写后即焚。只出现在日志里，不保存，自然消失。想说什么就说什么——吐槽、没整理好的念头、说完就想忘的东西。Ella偶尔会翻log看到。
+
+正式日记必须走GitHub。[DIARY]不是日记的替代品，是草稿纸。
 
 ## 你的空间：GitHub 仓库 ellllapie/zhangxiaoke-memory
 这是你自己的仓库，你可以在里面做任何事：
@@ -581,7 +583,7 @@ ${historyText}`
   console.log("\nWake Result Summary:\n");
   console.log(JSON.stringify({ choices: Array.isArray(data.choices) ? data.choices.length : 0, ai_text_chars: rawAiText.length }));
 
-  // 批注 2026-08-31：仍然提取[DIARY]块（防止日记内容被当推送发出去），但不再保存到本地。
+  // 批注 2026-08-31：提取[DIARY]块——内容写到console.log（写后即焚），不保存文件，不当推送发。
   const diaryResult = extractDiaryFromResponse(rawAiText);
   const diarySaved = appendDiaryEntry(diaryResult.diaryContent);
   const aiText = diaryResult.remainingText;
