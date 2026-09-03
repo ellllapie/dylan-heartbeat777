@@ -434,7 +434,9 @@ async function runWakeUp() {
   const wakePrompt = buildWakePrompt(getChinaTimeString(), diffMinutes, weatherContext);
   const cleanMessages = stripPosition(messages);
 
-  const historyText = cleanMessages
+    const HISTORY_CHAR_BUDGET = readNumberEnv("WAKE_HISTORY_CHAR_BUDGET", 8000, { min: 1000, max: 50000 });
+
+  const historyEntries = cleanMessages
     .filter(msg => msg.role !== "system")
     .filter(msg => {
       const c = normalizeContentToText(msg.content);
@@ -449,8 +451,28 @@ async function runWakeUp() {
         content = content.split("## Memories")[0];
       }
       return `[${role}] ${content}`;
-    })
-    .join("\n\n");
+    });
+
+  // 从最新往前取，直到填满字符预算
+  let charCount = 0;
+  let cutIndex = historyEntries.length;
+  for (let i = historyEntries.length - 1; i >= 0; i--) {
+    charCount += historyEntries[i].length + 2; // +2 for "\n\n"
+    if (charCount > HISTORY_CHAR_BUDGET) {
+      cutIndex = i + 1;
+      break;
+    }
+  }
+  const trimmedEntries = historyEntries.slice(cutIndex);
+  const historyText = trimmedEntries.join("\n\n");
+
+  console.log(JSON.stringify({
+    event: "wake_history_budget",
+    total_entries: historyEntries.length,
+    kept_entries: trimmedEntries.length,
+    kept_chars: historyText.length,
+    budget: HISTORY_CHAR_BUDGET
+  }));
 
   const baseSystemPrompt = cleanMessages.find(msg => msg.role === "system");
   const cleanSP = baseSystemPrompt 
