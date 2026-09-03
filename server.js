@@ -737,9 +737,13 @@ app.post("/v1/chat/completions", async (req, reply) => {
       reply.raw.write(value);
     }
     reply.raw.end();
-  } catch (err) {
+    } catch (err) {
     console.error(err);
-    reply.code(500).send({ error: err.message });
+    if (reply.raw.headersSent) {
+      reply.raw.end();
+    } else {
+      reply.code(500).send({ error: err.message });
+    }
   }
 });
 
