@@ -1,5 +1,7 @@
 const DEFAULT_TIME_ZONE = "Asia/Shanghai";
 
+const WEEKDAY_NAMES = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
 function resolveTimeZone(raw = process.env.TIME_ZONE, fallback = DEFAULT_TIME_ZONE) {
   const zone = String(raw || "").trim() || fallback;
   try {
@@ -33,9 +35,24 @@ function getDatePartsInTimeZone(date = new Date(), timeZone = resolveTimeZone())
   };
 }
 
+// 批注 2026-09-05：加了星期几。之前只输出 "2026-09-05 14:39"，AI 自己算星期反复算错
+// （把周六写成周五、把周五写成周四），现在直接输出 "2026-09-05 14:39 周六"。
+function getWeekdayInTimeZone(date = new Date(), timeZone = resolveTimeZone()) {
+  // 用 Intl 拿到该时区的星期几，避免 date.getDay() 是 UTC 星期
+  const weekdayFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short"
+  });
+  const enDay = weekdayFormatter.format(date); // "Sun", "Mon", ...
+  const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const idx = map[enDay];
+  return idx !== undefined ? idx : date.getDay();
+}
+
 function formatDateTimeInTimeZone(date = new Date(), timeZone = resolveTimeZone()) {
   const parts = getDatePartsInTimeZone(date, timeZone);
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+  const weekday = WEEKDAY_NAMES[getWeekdayInTimeZone(date, timeZone)];
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${weekday}`;
 }
 
 function getHourInTimeZone(date = new Date(), timeZone = resolveTimeZone()) {
@@ -68,7 +85,7 @@ function zonedWallTimeToDate({ year, month, day, hour, minute }, timeZone = reso
   let parsed = new Date(utcGuess - offset);
 
   // 批注 2026-07-30：Kelivo 时间戳是用户所在时区的墙上时间；Railway 常用 UTC，
-  // 这里显式按 TIME_ZONE 转成真实 UTC Date，避免把北京时间误当 UTC 导致“用户来自未来”。
+  // 这里显式按 TIME_ZONE 转成真实 UTC Date，避免把北京时间误当 UTC 导致"用户来自未来"。
   const adjustedOffset = getTimeZoneOffsetMs(parsed, timeZone);
   if (adjustedOffset !== offset) {
     parsed = new Date(utcGuess - adjustedOffset);
@@ -81,6 +98,7 @@ module.exports = {
   formatDateTimeInTimeZone,
   getDatePartsInTimeZone,
   getHourInTimeZone,
+  getWeekdayInTimeZone,
   resolveTimeZone,
   zonedWallTimeToDate
 };
