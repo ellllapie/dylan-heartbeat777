@@ -341,17 +341,45 @@ function parseTimelineTimestamp(value) {
   return zonedWallTimeToDate({ year: yyyy, month, day, hour, minute }, TIME_ZONE);
 }
 
+// 批注 2026-09-05：加诊断日志，排查"未找到用户时间"问题。
+// 同时加 fallback：如果所有 user 消息都没有时间前缀，用 timeline 文件的 mtime 兜底。
 function getLastUserTime(messages) {
   const reversed = [...messages].reverse();
+  let userMsgCount = 0;
+  let lastUserPreview = "";
   for (const msg of reversed) {
     if (msg.role === "user") {
       const content = normalizeContentToText(msg.content);
-      // 批注 2026-07-15：兼容 Kelivo 时间前缀 "YYYY-MM-DDHH:mm"；
-      // 旧的 "YYYY-MM-DD HH:mm" 仍然可用，避免无空格时间导致 wake-up 误判没有用户时间。
+      userMsgCount++;
+      if (userMsgCount === 1) {
+        // 只记最后一条 user 消息的前80字符，用于诊断时间解析失败
+        lastUserPreview = content.slice(0, 80).replace(/\n/g, "\\n");
+      }
       const parsed = parseTimelineTimestamp(content);
       if (parsed) return parsed;
     }
   }
+
+  // 所有 user 消息都没有可解析的时间前缀
+  console.log(JSON.stringify({
+    event: "wake_no_user_time",
+    total_messages: messages.length,
+    user_messages: userMsgCount,
+    last_user_preview: lastUserPreview,
+    content_type: userMsgCount > 0 ? typeof messages.find(m => m.role === "user")?.content : "no_user_msg"
+  }));
+
+  // Fallback: 用 timeline 文件的 mtime（最后修改时间）作为近似的用户最后活跃时间
+  // 每次 Kelivo 请求都会重写 timeline，所以 mtime 约等于最后一次对话时间
+  try {
+    const stat = fs.statSync(TIMELINE_PATH);
+    const mtime = stat.mtime;
+    if (mtime && !isNaN(mtime.getTime())) {
+      console.log(`未从消息内容解析到时间，fallback 到 timeline 文件 mtime: ${mtime.toISOString()}`);
+      return mtime;
+    }
+  } catch {}
+
   return null;
 }
 
@@ -418,7 +446,7 @@ async function runWakeUp() {
 
   const lastUserTime = getLastUserTime(messages);
   if (!lastUserTime) {
-    console.log("未找到用户时间");
+    console.log("未找到用户时间（含 fallback 均失败）");
     return;
   }
 
