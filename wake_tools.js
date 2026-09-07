@@ -3,7 +3,8 @@
  * 连接 MCP Streamable HTTP 服务器，获取工具定义，执行工具调用
  */
 
-const TOOL_CALL_TIMEOUT_MS = 30_000;
+const DEFAULT_TOOL_CALL_TIMEOUT_MS = 30_000;
+const BROWSE_TOOL_CALL_TIMEOUT_MS = 120_000; // browse_web needs longer
 const MAX_TOOL_ROUNDS = 10;
 const MAX_CALLS_PER_ROUND = 5;
 const MAX_RESULT_LENGTH = 6000;
@@ -32,9 +33,17 @@ function loadMcpServerConfigs() {
 }
 
 /**
+ * 获取工具调用超时时间（browse_web 需要更长）
+ */
+function getToolTimeout(toolName) {
+  if (toolName === "browse_web") return BROWSE_TOOL_CALL_TIMEOUT_MS;
+  return DEFAULT_TOOL_CALL_TIMEOUT_MS;
+}
+
+/**
  * 发送 JSON-RPC 请求到 MCP 服务器
  */
-async function mcpRequest(serverConfig, method, params = {}, id = 1) {
+async function mcpRequest(serverConfig, method, params = {}, id = 1, timeoutMs = DEFAULT_TOOL_CALL_TIMEOUT_MS) {
   const headers = {
     "Content-Type": "application/json",
     "Accept": "application/json, text/event-stream"
@@ -57,7 +66,7 @@ async function mcpRequest(serverConfig, method, params = {}, id = 1) {
     method: "POST",
     headers,
     body,
-    signal: AbortSignal.timeout(TOOL_CALL_TIMEOUT_MS)
+    signal: AbortSignal.timeout(timeoutMs)
   });
 
   // 保存session id
@@ -134,10 +143,11 @@ async function initAndListTools(serverConfig) {
  * 调用MCP工具
  */
 async function callTool(serverConfig, toolName, args) {
+  const timeoutMs = getToolTimeout(toolName);
   const result = await mcpRequest(serverConfig, "tools/call", {
     name: toolName,
     arguments: args
-  }, Date.now());
+  }, Date.now(), timeoutMs);
   return result?.result;
 }
 
