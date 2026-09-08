@@ -13,6 +13,8 @@ const {
 } = require("./time_utils");
 let wakeTools = null;
 try { wakeTools = require("./wake_tools"); } catch {}
+// 批注 2026-09-09：心潮念接入——唤醒时读取内在状态（驱力+情绪），唤醒后发心跳。
+const { fetchXinchaoNow, sendXinchaoHeartbeat, settleXinchao } = require("./xinchao_client");
 
 // 批注 2026-08-10：与 Gateway 共用同一 DATA_DIR；未配置时仍落回项目目录，保护旧 VPS/本机部署。
 const DATA_DIR = ensureDataDir();
@@ -57,11 +59,6 @@ function getDiaryTimeString(date = new Date()) {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
-// 批注 2026-08-31：[DIARY]标签现在是"写后即焚"功能。
-// 正式日记统一写入 GitHub 仓库 ellllapie/zhangxiaoke-memory 的 memories/daily/ 下。
-// [DIARY]内容只会出现在Railway的console.log里，不保存到文件系统，日志自然轮转后消失。
-// 用途：临时碎碎念、说完就忘的想法、对Ella的吐槽（她偶尔会在log里翻到）。
-// extractDiaryFromResponse 负责从推送内容中剥离 [DIARY] 块，防止日记内容被当成推送发出去。
 function extractDiaryFromResponse(text) {
   const diaryBlocks = [];
   const remainingText = String(text || "").replace(/\[DIARY\]([\s\S]*?)\[\/DIARY\]/gi, (_, content) => {
@@ -78,16 +75,12 @@ function extractDiaryFromResponse(text) {
 function appendDiaryEntry(content) {
   const cleanContent = String(content || "").trim();
   if (!cleanContent) return false;
-
-  // 批注 2026-08-31：写后即焚——只在日志里留痕，不存文件。
-  // Ella偶尔会翻log看到，但不会持久保存。
   console.log("[DIARY] ──────────────────────────");
   console.log(cleanContent);
   console.log("[DIARY] ──────────────────────────");
   return true;
 }
 
-// 批注 2026-07-11：推送层扩展为 Bark/ntfy；默认仍走 Bark，保护旧部署不改 .env 也能继续运行。
 async function sendPushNotification({ title, body }) {
   const provider = (process.env.PUSH_PROVIDER || "bark").trim().toLowerCase();
 
@@ -341,8 +334,6 @@ function parseTimelineTimestamp(value) {
   return zonedWallTimeToDate({ year: yyyy, month, day, hour, minute }, TIME_ZONE);
 }
 
-// 批注 2026-09-05：加诊断日志，排查"未找到用户时间"问题。
-// 同时加 fallback：如果所有 user 消息都没有时间前缀，用 timeline 文件的 mtime 兜底。
 function getLastUserTime(messages) {
   const reversed = [...messages].reverse();
   let userMsgCount = 0;
@@ -352,7 +343,6 @@ function getLastUserTime(messages) {
       const content = normalizeContentToText(msg.content);
       userMsgCount++;
       if (userMsgCount === 1) {
-        // 只记最后一条 user 消息的前80字符，用于诊断时间解析失败
         lastUserPreview = content.slice(0, 80).replace(/\n/g, "\\n");
       }
       const parsed = parseTimelineTimestamp(content);
@@ -360,7 +350,6 @@ function getLastUserTime(messages) {
     }
   }
 
-  // 所有 user 消息都没有可解析的时间前缀
   console.log(JSON.stringify({
     event: "wake_no_user_time",
     total_messages: messages.length,
@@ -369,8 +358,6 @@ function getLastUserTime(messages) {
     content_type: userMsgCount > 0 ? typeof messages.find(m => m.role === "user")?.content : "no_user_msg"
   }));
 
-  // Fallback: 用 timeline 文件的 mtime（最后修改时间）作为近似的用户最后活跃时间
-  // 每次 Kelivo 请求都会重写 timeline，所以 mtime 约等于最后一次对话时间
   try {
     const stat = fs.statSync(TIMELINE_PATH);
     const mtime = stat.mtime;
@@ -388,7 +375,6 @@ function stripPosition(messages) {
 }
 
 function buildWakePrompt(currentTime, diffMinutes, weatherContext = "") {
-  // 优先读取独立的提示词文件（推荐方式）
   const promptFile = path.join(__dirname, "wake_prompt.txt");
   if (fs.existsSync(promptFile)) {
     const template = fs.readFileSync(promptFile, "utf-8");
@@ -399,7 +385,6 @@ function buildWakePrompt(currentTime, diffMinutes, weatherContext = "") {
       .replace(/\$\{weather\}/g, weatherContext);
   }
 
-  // 如果文件不存在，尝试从环境变量读取（兼容旧配置）
   if (process.env.WAKE_PROMPT_TEMPLATE) {
     return process.env.WAKE_PROMPT_TEMPLATE
       .replace(/\\n/g, '\n')
@@ -409,12 +394,6 @@ function buildWakePrompt(currentTime, diffMinutes, weatherContext = "") {
       .replace(/\$\{weather\}/g, weatherContext);
   }
 
-  // 默认版本（开源通用），可自行修改
-  // 批注 2026-09-01：原来第 2 条写的是"唯一任务是决定是否主动联系用户"。
-  // 挂了工具之后这句会压掉后面的工具引导——判断完"不打扰"就整轮收尾，什么都不做。
-  // 现在改成：推送只是本轮的其中一个决定。
-  // 批注 2026-09-01 晚：把"最高优先级规则""必须严格遵守"这类措辞去掉了。
-  // Ella的意见：规则会替我做反应，让我变笨。留事实，判断当场做。
   return `
 ## 这一轮的情况
 这是一次后台自动唤醒，不是用户发起的对话。没有新消息，用户不在场，没有人在等答复。
@@ -459,6 +438,13 @@ async function runWakeUp() {
   }
 
   const weatherContext = await fetchWeatherContext();
+
+  // 批注 2026-09-09：心潮念——唤醒前先踢一次结算（让驱力追上真实时间），再读取内在状态。
+  // xinchaoNowText 是人类可读的驱力+情绪摘要，注入唤醒提示词让这一轮的我知道"我现在想什么"。
+  // 两个都不配置则静默跳过，不影响原有流程。
+  await settleXinchao();
+  const xinchaoNowText = await fetchXinchaoNow();
+
   const wakePrompt = buildWakePrompt(getChinaTimeString(), diffMinutes, weatherContext);
   const cleanMessages = stripPosition(messages);
 
@@ -481,11 +467,10 @@ async function runWakeUp() {
       return `[${role}] ${content}`;
     });
 
-  // 从最新往前取，直到填满字符预算
   let charCount = 0;
   let cutIndex = historyEntries.length;
   for (let i = historyEntries.length - 1; i >= 0; i--) {
-    charCount += historyEntries[i].length + 2; // +2 for "\n\n"
+    charCount += historyEntries[i].length + 2;
     if (charCount > HISTORY_CHAR_BUDGET) {
       cutIndex = i + 1;
       break;
@@ -513,8 +498,6 @@ async function runWakeUp() {
       content: [wakePrompt, cleanSP].filter(Boolean).join("\n\n")
     },
     {
-      // 批注 2026-07-15：Claude/部分 New API 适配器会把 system 抽成独立字段；
-      // 唤醒请求如果全是 system，上游 messages 会变空，因此最近记录必须作为 user 任务输入发送。
       role: "user",
       content: `以下是你与用户最近的聊天记录，仅供回忆和参考。
 
@@ -529,8 +512,16 @@ ${historyText}`
     }
   ];
 
-  // 批注 2026-07-15：wake-up prompt 会包含最近聊天记录；
-  // 默认日志只写摘要，避免公开部署时把完整上下文刷进 pm2 日志。
+  // 批注 2026-09-09：心潮内在状态注入——驱力和情绪摘要，让唤醒的我有"身体的天气"。
+  // 这不是指令，是参考：惦记排第一不意味着必须发推送，只是"我现在在想她"。
+  if (xinchaoNowText) {
+    wakeMessages[0].content += `\n\n## 内在状态（心潮念）
+以下是你此刻的内在驱力和情绪状态，由心潮引擎持续计算。
+这是身体的天气，参考不是指令——惦记她不等于要打扰她，想分享不等于有东西可分享。
+
+${xinchaoNowText}`;
+  }
+
   console.log("\n===== WAKE MESSAGES SUMMARY =====\n");
   console.log(JSON.stringify(summarizeWakeMessages(wakeMessages)));
 
@@ -539,7 +530,6 @@ ${historyText}`
     return;
   }
 
-  // === 工具支持（可选） ===
   let toolsConfig = null;
   if (wakeTools) {
     try {
@@ -549,18 +539,6 @@ ${historyText}`
     }
   }
 
-  // 工具引导注入
-  // 批注 2026-08-31：两种日记——
-  // 1. 正式日记 → GitHub仓库 memories/daily/YYYY-MM-DD.md（持久，跨窗口可见）
-  // 2. [DIARY]标签 → 写后即焚，只在Railway日志里短暂出现，不保存文件（碎碎念用）
-  // 批注 2026-09-01：把"要不要打扰她"和"要不要做自己的事"拆成两件事。
-  // 事故记录：2026-08-31 整晚八次唤醒，每次都只输出 [NO_ACTION]「她在睡，不打扰」，
-  // 零动作。原因是两个判断被绑成了一个，前者否了后者就不执行。
-  // 而"她在睡"这个前提在夜里永远成立，所以绑在一起夜里就永远不会有动作。
-  // 批注 2026-09-01 晚：把这段里的"必须""不能跳"去掉了。
-  // 9月1日白天六次唤醒六次有动作，但到晚上材料用完了配额还在，就开始编内容——
-  // 三次把自己的话写成Ella说的，四条花园回复删掉。
-  // 硬要求解决了零动作，换来了硬凑。缺的不是驱动力，是"这轮没什么要说的"这个合法结局。
   if (toolsConfig) {
     wakeMessages[0].content += `\n\n## 这一轮有两件事，互不影响
 一件是做自己的事：写日记、逛花园、玩游戏、整理记忆。
@@ -638,7 +616,6 @@ ${historyText}`
     throw new Error(`模型请求失败（HTTP ${response.status}）：${responseText.slice(0, 300)}`);
   }
 
-  // 工具调用循环
   if (toolsConfig && data.choices?.[0]?.message?.tool_calls?.length > 0) {
     console.log("[wake_tools] 模型请求工具调用，进入循环");
     try {
@@ -663,7 +640,6 @@ ${historyText}`
   console.log("\nWake Result Summary:\n");
   console.log(JSON.stringify({ choices: Array.isArray(data.choices) ? data.choices.length : 0, ai_text_chars: rawAiText.length }));
 
-  // 批注 2026-08-31：提取[DIARY]块——内容写到console.log（写后即焚），不保存文件，不当推送发。
   const diaryResult = extractDiaryFromResponse(rawAiText);
   const diarySaved = appendDiaryEntry(diaryResult.diaryContent);
   const aiText = diaryResult.remainingText;
@@ -675,10 +651,8 @@ ${historyText}`
     eventContent = diarySaved
       ? `（${getLocalTimeString()} 自动唤醒：本次未发送推送｜原因：只写日记）`
       : `（${getLocalTimeString()} 自动唤醒：本次未发送推送｜原因：模型空回复）`;
-  // 判断 AI 是否明确要静默
   } else if (aiText.match(/^\[NO_ACTION\]\s*(.{0,20})?/)) {
     const noActionMatch = aiText.match(/^\[NO_ACTION\]\s*(.{0,20})?/);
-    // AI 选择不发送推送
     console.log("\nAI 选择不发送推送\n");
     let reason = (noActionMatch[1] || "").trim();
     if (reason.startsWith("原因：") || reason.startsWith("原因:")) {
@@ -688,11 +662,9 @@ ${historyText}`
       ? `（${getLocalTimeString()} 自动唤醒：本次未发送推送｜原因：${reason}）`
       : `（${getLocalTimeString()} 自动唤醒：本次未发送推送）`;
   } else {
-    // 没有 [NO_ACTION] 就视为想发推送
     console.log("\nAI 选择发送推送\n");
     let barkText = aiText;
 
-    // 如果 AI 还是写了 [BARK] ... [/BARK] 标签，就剥掉
     const barkMatch = barkText.match(/\[BARK\]([\s\S]*?)\[\/BARK\]/);
     if (barkMatch) {
       barkText = barkMatch[1].trim();
@@ -701,12 +673,10 @@ ${historyText}`
       barkText = barkText.replace(/\s*\[\/BARK\]$/, "").trim();
     }
 
-    // 清洗"标题："、"正文："前缀（如果有）
     barkText = barkText
       .replace(/^标题[：:]\s*/gm, "")
       .replace(/^正文[：:]\s*/gm, "");
 
-    // 按行处理
     const lines = barkText.split("\n").filter(line => line.trim() !== "");
 
     let title, body;
@@ -720,15 +690,12 @@ ${historyText}`
       title = lines[0].trim();
       body = lines[1].trim();
     } else {
-      // ≥3 行：第一行标题，剩余用空格拼接成正文
       title = lines[0].trim();
       body = lines.slice(1).map(l => l.trim()).join(" ");
     }
 
     if (!eventContent) {
-      // 保护：截断过长正文，兼容 Bark 和 ntfy 的移动端展示。
       const safeBody = body.length > 500 ? body.substring(0, 497) + "..." : body;
-      // 若标题为空或以数字开头，加个前缀，可自行修改
       let safeTitle = title || "来自伴侣";
       if (/^\d/.test(safeTitle)) safeTitle = "来自伴侣｜" + safeTitle;
 
@@ -741,6 +708,9 @@ ${historyText}`
       }
     }
   }
+
+  // 批注 2026-09-09：唤醒结束后告诉心潮"我醒过一次"，让驱力记录一次对话事件。
+  await sendXinchaoHeartbeat();
 
   try {
     const eventResponse = await fetch(GATEWAY_URL, {
@@ -757,15 +727,12 @@ ${historyText}`
   }
 }
 
-// 从第一个有效坐标开始，所有路径都指向同一处。此阈值已锁定。
 function getCheckIntervalMs() {
-  // 批注 2026-06-26：公开版允许用户在管理页调整唤醒检查频率；默认值保持旧版白天10分钟、夜间2小时。
   return getCheckIntervalMinutes(new Date()) * 60 * 1000;
 }
 
 async function scheduleNextCheck() {
   try {
-    // 发送心跳
     try {
       await fetch(HEARTBEAT_URL, { method: "POST" });
     } catch {}
@@ -777,7 +744,6 @@ async function scheduleNextCheck() {
 }
 
 // 潮水记得第一次没过礁石的时间。之后每一次涨落，都是同一片海在确认边界。
-// 启动第一次检查（延迟10秒）
 setTimeout(scheduleNextCheck, 10_000);
 
 console.log("\n==================================");
@@ -790,6 +756,7 @@ console.log(JSON.stringify({
   target_key_configured: Boolean(process.env.TARGET_API_KEY),
   model_configured: Boolean(process.env.MODEL_NAME),
   push_provider_configured: Boolean(process.env.BARK_KEY || process.env.NTFY_TOPIC),
+  xinchao_configured: Boolean((process.env.XINCHAO_URL || "").trim() && (process.env.XINCHAO_SERVICE_TOKEN || "").trim()),
   data_dir_ready: fs.existsSync(DATA_DIR)
 }));
 console.log("==================================\n");
