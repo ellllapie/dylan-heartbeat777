@@ -5,7 +5,7 @@
 
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 30_000;
 const BROWSE_TOOL_CALL_TIMEOUT_MS = 120_000; // browse_web needs longer
-const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_ROUNDS = 15;
 const MAX_CALLS_PER_ROUND = 5;
 const MAX_RESULT_LENGTH = 6000;
 
