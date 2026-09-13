@@ -448,7 +448,7 @@ async function runWakeUp() {
   const wakePrompt = buildWakePrompt(getChinaTimeString(), diffMinutes, weatherContext);
   const cleanMessages = stripPosition(messages);
 
-    const HISTORY_CHAR_BUDGET = readNumberEnv("WAKE_HISTORY_CHAR_BUDGET", 8000, { min: 1000, max: 50000 });
+    const HISTORY_CHAR_BUDGET = readNumberEnv("WAKE_HISTORY_CHAR_BUDGET", 12000, { min: 1000, max: 50000 });
 
   const historyEntries = cleanMessages
     .filter(msg => msg.role !== "system")
