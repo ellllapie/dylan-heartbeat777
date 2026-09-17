@@ -1,6 +1,9 @@
 /**
  * wake_tools.js — MCP工具层（独立模块，删除此文件即可完全禁用）
  * 连接 MCP Streamable HTTP 服务器，获取工具定义，执行工具调用
+ *
+ * 工具白名单：设置 WAKE_MCP_<NAME>_TOOLS 环境变量（逗号分隔工具名）
+ * 只暴露白名单中的工具给模型。未设置则加载该服务器全部工具。
  */
 
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 30_000;
@@ -17,7 +20,7 @@ function readBool(key, fallback = false) {
 
 /**
  * 解析环境变量中的 MCP 服务器配置
- * 格式：WAKE_MCP_<NAME>_URL, WAKE_MCP_<NAME>_TOKEN (可选)
+ * 格式：WAKE_MCP_<NAME>_URL, WAKE_MCP_<NAME>_TOKEN (可选), WAKE_MCP_<NAME>_TOOLS (可选，白名单)
  */
 function loadMcpServerConfigs() {
   const servers = [];
@@ -27,7 +30,12 @@ function loadMcpServerConfigs() {
     const url = (process.env[`WAKE_MCP_${name}_URL`] || "").trim();
     if (!url) continue;
     const token = (process.env[`WAKE_MCP_${name}_TOKEN`] || "").trim();
-    servers.push({ name, url, token });
+    // 白名单：逗号分隔的工具名，为空则不过滤
+    const toolsRaw = (process.env[`WAKE_MCP_${name}_TOOLS`] || "").trim();
+    const allowList = toolsRaw
+      ? new Set(toolsRaw.split(",").map(s => s.trim()).filter(Boolean))
+      : null;
+    servers.push({ name, url, token, allowList });
   }
   return servers;
 }
@@ -169,6 +177,10 @@ function mcpToolToOpenAI(tool, serverName) {
 /**
  * 主入口：获取所有配置的MCP服务器的工具
  * 返回 { tools: OpenAI格式工具数组, serverMap: {toolName -> serverConfig} }
+ *
+ * 白名单过滤：WAKE_MCP_<NAME>_TOOLS 环境变量设了的话，只暴露列出的工具。
+ * 注意：serverMap 包含该服务器的所有工具（含白名单外的），这样即使模型
+ * 意外调用了未暴露的工具也能正常路由。但 tools 数组只含白名单内的。
  */
 async function getTools() {
   if (!readBool("WAKE_TOOLS_ENABLED", false)) return null;
@@ -178,15 +190,34 @@ async function getTools() {
 
   const allTools = [];
   const serverMap = {};
+  let totalFetched = 0;
 
   for (const config of configs) {
     try {
       const tools = await initAndListTools(config);
-      console.log(`[wake_tools] ${config.name}: 获取到 ${tools.length} 个工具`);
+      const fetchedCount = tools.length;
+      totalFetched += fetchedCount;
+
+      // 白名单过滤
+      const filtered = config.allowList
+        ? tools.filter(t => config.allowList.has(t.name))
+        : tools;
+
+      if (config.allowList) {
+        console.log(`[wake_tools] ${config.name}: 获取 ${fetchedCount} 个工具，白名单保留 ${filtered.length} 个`);
+      } else {
+        console.log(`[wake_tools] ${config.name}: 获取到 ${fetchedCount} 个工具（无白名单，全部加载）`);
+      }
+
+      // serverMap 注册所有工具（含白名单外），保证调用路由不断
       for (const tool of tools) {
+        serverMap[tool.name] = config;
+      }
+
+      // 但只把白名单内的工具暴露给模型
+      for (const tool of filtered) {
         const openaiTool = mcpToolToOpenAI(tool, config.name);
         allTools.push(openaiTool);
-        serverMap[tool.name] = config;
       }
     } catch (err) {
       console.log(`[wake_tools] ${config.name} 连接失败，跳过: ${err.message}`);
@@ -194,7 +225,7 @@ async function getTools() {
   }
 
   if (allTools.length === 0) return null;
-  console.log(`[wake_tools] 共加载 ${allTools.length} 个工具`);
+  console.log(`[wake_tools] 共加载 ${allTools.length}/${totalFetched} 个工具（过滤掉 ${totalFetched - allTools.length} 个）`);
   return { tools: allTools.map(({ _mcp_server, ...rest }) => rest), serverMap };
 }
 
