@@ -94,7 +94,7 @@ async function mcpRequest(serverConfig, method, params = {}, id = 1, timeoutMs =
       }
     }
     if (lastData) return JSON.parse(lastData);
-    throw new Error("SSE响应中无data事件");
+    throw new Error(`SSE响应中无data事件 (HTTP ${response.status}): ${text.slice(0, 200)}`);
   }
 
   if (!response.ok) {
@@ -129,34 +129,65 @@ async function mcpNotify(serverConfig, method, params = {}) {
 }
 
 /**
- * 初始化MCP连接并获取工具列表
+ * 只做 initialize 握手（拿新的 session id）
  */
-async function initAndListTools(serverConfig) {
-  // Initialize
-  const initResult = await mcpRequest(serverConfig, "initialize", {
+async function initSession(serverConfig) {
+  serverConfig.sessionId = undefined;
+  await mcpRequest(serverConfig, "initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
     clientInfo: { name: "dylan-heartbeat-wake", version: "1.0.0" }
   }, 1);
-
-  // Send initialized notification
   await mcpNotify(serverConfig, "notifications/initialized");
+}
 
-  // List tools
+/**
+ * 初始化MCP连接并获取工具列表
+ */
+async function initAndListTools(serverConfig) {
+  await initSession(serverConfig);
   const toolsResult = await mcpRequest(serverConfig, "tools/list", {}, 2);
   return toolsResult?.result?.tools || [];
 }
 
 /**
- * 调用MCP工具
+ * 调用一次工具，返回 result；JSON-RPC 报错或缺 result 时抛出带原文的错误
  */
-async function callTool(serverConfig, toolName, args) {
+async function callToolOnce(serverConfig, toolName, args) {
   const timeoutMs = getToolTimeout(toolName);
-  const result = await mcpRequest(serverConfig, "tools/call", {
+  const res = await mcpRequest(serverConfig, "tools/call", {
     name: toolName,
     arguments: args
   }, Date.now(), timeoutMs);
-  return result?.result;
+
+  if (res?.error) {
+    const e = new Error(`MCP错误 ${res.error.code ?? ""}: ${res.error.message || JSON.stringify(res.error)}`);
+    e.mcpError = res.error;
+    throw e;
+  }
+  if (res?.result === undefined) {
+    throw new Error(`MCP返回里没有result: ${JSON.stringify(res).slice(0, 300)}`);
+  }
+  return res.result;
+}
+
+function looksLikeSessionProblem(err) {
+  const msg = String(err?.message || "").toLowerCase();
+  return msg.includes("session") || msg.includes("http 404") || msg.includes("not initialized");
+}
+
+/**
+ * 调用MCP工具（session 失效时重新握手重试一次）
+ */
+async function callTool(serverConfig, toolName, args) {
+  try {
+    return await callToolOnce(serverConfig, toolName, args);
+  } catch (err) {
+    if (!looksLikeSessionProblem(err)) throw err;
+    console.log(`[wake_tools] ${toolName} 疑似session失效，重新握手后重试: ${err.message}`);
+    await initSession(serverConfig);
+    return await callToolOnce(serverConfig, toolName, args);
+  }
 }
 
 /**
@@ -268,14 +299,18 @@ async function executeToolLoop(messages, assistantMessage, serverMap, requestOpt
           const result = await callTool(config, fnName, fnArgs);
           // MCP结果可能是 {content: [{type: "text", text: "..."}]}
           if (result?.content && Array.isArray(result.content)) {
-            resultContent = result.content.map(c => c.text || JSON.stringify(c)).join("\n");
+            resultContent = result.content.map(c => c?.text ?? JSON.stringify(c)).join("\n");
           } else {
-            resultContent = JSON.stringify(result);
+            resultContent = JSON.stringify(result) ?? "null";
           }
-          console.log(`[wake_tools] ${fnName} 执行成功 (${resultContent.length} chars)`);
+          if (result?.isError) {
+            console.log(`[wake_tools] ${fnName} 工具返回错误: ${resultContent.slice(0, 300)}`);
+          } else {
+            console.log(`[wake_tools] ${fnName} 执行成功 (${resultContent.length} chars)`);
+          }
         } catch (err) {
           resultContent = JSON.stringify({ error: err.message });
-          console.log(`[wake_tools] ${fnName} 执行失败: ${err.message}`);
+          console.log(`[wake_tools] ${fnName} 执行失败: ${err.message} | args=${JSON.stringify(fnArgs).slice(0, 200)}`);
         }
       }
 
