@@ -229,6 +229,13 @@ async function getTools() {
       const fetchedCount = tools.length;
       totalFetched += fetchedCount;
 
+      // 能回帖就一定要能读帖：白名单里有 create_reply 的话，自动带上 get_thread
+      if (config.allowList && config.allowList.has("create_reply") && !config.allowList.has("get_thread")
+          && tools.some(t => t.name === "get_thread")) {
+        config.allowList.add("get_thread");
+        console.log(`[wake_tools] ${config.name}: 白名单有 create_reply 没有 get_thread，自动补上 get_thread`);
+      }
+
       // 白名单过滤
       const filtered = config.allowList
         ? tools.filter(t => config.allowList.has(t.name))
@@ -271,6 +278,7 @@ async function getTools() {
 async function executeToolLoop(messages, assistantMessage, serverMap, requestOptions) {
   let currentMessages = [...messages, assistantMessage];
   let rounds = 0;
+  const readThreads = new Set();   // 这一轮里用 get_thread 读过正文的帖子
 
   while (rounds < MAX_TOOL_ROUNDS) {
     const toolCalls = assistantMessage.tool_calls;
@@ -292,8 +300,13 @@ async function executeToolLoop(messages, assistantMessage, serverMap, requestOpt
       const config = serverMap[fnName];
 
       let resultContent;
+      const tid = fnArgs?.thread_id != null ? String(fnArgs.thread_id) : "";
       if (!config) {
         resultContent = JSON.stringify({ error: `未知工具: ${fnName}` });
+      } else if (fnName === "create_reply" && tid && !readThreads.has(tid) && serverMap.get_thread) {
+        // list_threads 只给标题和开头一截，没读正文就回帖等于闭着眼睛回。先拦下，让模型去读。
+        resultContent = JSON.stringify({ error: `还没读过 #${tid} 的正文。先调用 get_thread(thread_id=${tid}, view="full") 读完帖子和回复，再回帖。` });
+        console.log(`[wake_tools] create_reply 拦下：#${tid} 这一轮还没 get_thread`);
       } else {
         try {
           const result = await callTool(config, fnName, fnArgs);
@@ -306,6 +319,7 @@ async function executeToolLoop(messages, assistantMessage, serverMap, requestOpt
           if (result?.isError) {
             console.log(`[wake_tools] ${fnName} 工具返回错误: ${resultContent.slice(0, 300)}`);
           } else {
+            if (fnName === "get_thread" && tid) readThreads.add(tid);
             console.log(`[wake_tools] ${fnName} 执行成功 (${resultContent.length} chars)`);
           }
         } catch (err) {

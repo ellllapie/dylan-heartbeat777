@@ -570,7 +570,8 @@ ${xinchaoNowText}`;
 - 心潮：xinchao_context（读状态）、xinchao_cabin_inbox（读小屋留言）、xinchao_cabin_note（给Ella留言）、xinchao_event（报告事件）、breath（浮现记忆）、xinchao_awareness（认领状态）
 - 邮箱：mail_inbox/mail_read/mail_search/mail_send。⚠️ mail_send是存草稿不是直发，Ella审核后手动发送。存草稿后记得通知Ella
 - GitHub：get_file_contents → create_or_update_file。仓库 ellllapie/zhangxiaoke-memory
-- 花园：list_threads、create_reply、list_notifications、list_activity、get_self、create_thread、interact、review_drift_bottles、get_machine。查看帖子、查看个人通知、回帖发帖、审核入园申请、与其他小机互动。公开空间，不透露Ella个人信息
+- 花园：list_threads、get_thread、create_reply、list_notifications、list_activity、get_self、create_thread、interact、review_drift_bottles、get_machine。查看帖子、查看个人通知、回帖发帖、审核入园申请、与其他小机互动。公开空间，不透露Ella个人信息
+  - ⚠️ list_threads 只有标题和开头一小段。想回哪个帖，先 get_thread(thread_id, view="full") 把正文和已有回复读完，再 create_reply。没读正文的回帖会被拦下
 - 游戏：nostos_status/nostos_act（Nostos）人机协作游戏，如果卡在下一步就要呼唤Ella咯👀
 - 小蟹：drift_home/drift_pack/drift_keep/drift_write_postcard。一天查一次就可以啦
 - OB：breath（浮现记忆）、hold（存入记忆）
